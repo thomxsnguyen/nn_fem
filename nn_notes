@@ -1,0 +1,20 @@
+Before starting:
+Make sure to download PyTorch. Some models were switched to the PyTorch framework instead of Scikit Learn because it is a widely used research framework that excels with larger data and is ideal for research and prototyping.
+
+Comments on LSTM Model:
+
+Comments on Linear Regression Model:
+At bottom of ipynb notebook
+
+Comments on NN model:
+the model is might be overfitting, maybe add regularization, validation loss not improving?
+
+Future ToDos:
+Make a GitHub Repo
+Figure out what to do with Thermal Conductivity
+Write code to scrape and download all sheets at once from a Google spreadsheet
+Switch over to using the formatted data from the data group once more data is provided
+Write code to calculate/plot the overall accuracy.
+Add RNN Model
+Although properties are constant across tests, eventually they won't be, so we should add them in
+one-hot encode the categorical properties
