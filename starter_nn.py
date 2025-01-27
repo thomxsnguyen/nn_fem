@@ -59,9 +59,7 @@ class BasicNNModel(nn.Module):
         self.output_layer = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
-        # Process input through hidden layers
         out = self.hidden_layers(x)
-        # Output layer
         out = self.output_layer(out)
         return out
 
@@ -90,8 +88,8 @@ def train_model():
     # Determine input and output sizes dynamically
     for dataset in train_dataloader.dataset.datasets:
         if len(dataset) > 0:
-            input_size = dataset[0][0].shape[0]  # Input size from the first sample
-            output_size = dataset[0][1].shape[0]  # Output size from the first sample
+            input_size = dataset[0][0].shape[0]
+            output_size = dataset[0][1].shape[0]
             break
     else:
         raise ValueError("All datasets are empty. Check the dataset loading process.")
@@ -146,27 +144,19 @@ def train_model():
     return model, test_datasets
 
 
-
-# Run the Training
-trained_model, test_datasets = train_model()
-
-# Testing Function Placeholder
-import matplotlib.pyplot as plt
-import numpy as np
-
+# Testing Function
 def test_model(model, test_datasets):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.eval()  # Set model to evaluation mode
+    model.eval()
 
     for i, test_dataset in enumerate(test_datasets):
         dataset_name = f"ThermalAITest{i + 10}.csv"
         print(f"Testing on dataset: {dataset_name}")
 
         try:
-            # Iterate over all examples in the test dataset
             for idx in range(len(test_dataset)):
                 test_input, test_actual, time_values = test_dataset[idx]
-                test_input = test_input.unsqueeze(0).to(device)  # Add batch dimension
+                test_input = test_input.unsqueeze(0).to(device)
 
                 # Generate predictions
                 with torch.no_grad():
@@ -174,8 +164,8 @@ def test_model(model, test_datasets):
 
                 # Reshape predictions and actual values
                 num_time_steps = time_values.shape[0]
-                predicted_output = predicted_output.reshape(num_time_steps, -1)  # Reshape to (99, 3)
-                actual_values = test_actual.numpy().reshape(num_time_steps, -1)  # Reshape to (99, 3)
+                predicted_output = predicted_output.reshape(num_time_steps, -1)
+                actual_values = test_actual.numpy().reshape(num_time_steps, -1)
 
                 # Reverse scaling
                 scaler = test_dataset.scaler
@@ -209,5 +199,7 @@ def test_model(model, test_datasets):
             print(f"Error testing on {dataset_name}: {e}")
 
 
-# Run the Testing
-test_model(trained_model, test_datasets)
+# Main Execution
+if __name__ == "__main__":
+    trained_model, test_datasets = train_model()
+    test_model(trained_model, test_datasets)
