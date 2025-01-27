@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
+from torch.utils.data import Dataset, DataLoader, ConcatDataset, random_split
 from sklearn.preprocessing import MinMaxScaler
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-
+# Dataset Class
 class ThermalDataset(Dataset):
     def __init__(self, csv_file):
         df = pd.read_csv(csv_file)
@@ -16,11 +16,14 @@ class ThermalDataset(Dataset):
 
         # Fill missing data
         df[['Start_Time', 'Start_Temp', 'End_Time', 'End_Temp']] = df[
-            ['Start_Time', 'Start_Temp', 'End_Time', 'End_Temp']].ffill()
+            ['Start_Time', 'Start_Temp', 'End_Time', 'End_Temp']
+        ].ffill()
 
-        # Fit and transform temperature columns, but exclude time
+        # Fit and transform temperature columns
         self.scaler.fit(df[['T_min (C)', 'T_max (C)', 'T_ave (C)']])
-        df[['T_min (C)', 'T_max (C)', 'T_ave (C)']] = self.scaler.transform(df[['T_min (C)', 'T_max (C)', 'T_ave (C)']])
+        df[['T_min (C)', 'T_max (C)', 'T_ave (C)']] = self.scaler.transform(
+            df[['T_min (C)', 'T_max (C)', 'T_ave (C)']]
+        )
 
         grouped = df.groupby(['Start_Time', 'Start_Temp', 'End_Time', 'End_Temp'])
 
@@ -28,7 +31,7 @@ class ThermalDataset(Dataset):
 
         for _, group in grouped:
             if len(group) == 100:
-                # Flatten the input sequence into a single vector
+                # Flatten input sequence into a single vector
                 input_sequence = group[['Time (s)', 'T_min (C)', 'T_max (C)', 'T_ave (C)']].values[:-1].flatten()
                 target_sequence = group[['T_min (C)', 'T_max (C)', 'T_ave (C)']].values[1:].flatten()
 
@@ -47,21 +50,21 @@ class ThermalDataset(Dataset):
         return self.X[idx], self.Y[idx], self.time_values[idx]
 
 
-# Define Basic Neural Network Model
+# Neural Network Model
 class BasicNNModel(nn.Module):
-    def __init__(self, input_size, hidden_size=64, num_layers=2, output_size=3):
+    def __init__(self, input_size, hidden_size=128, num_layers=4, output_size=3):
         super(BasicNNModel, self).__init__()
-        self.hidden_layers = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            *[nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.ReLU()) for _ in range(num_layers - 1)],
-        )
-        self.output_layer = nn.Linear(hidden_size, output_size)
+        layers = []
+        layers.append(nn.Linear(input_size, hidden_size))
+        layers.append(nn.ReLU())
+        for _ in range(num_layers - 1):
+            layers.append(nn.Linear(hidden_size, hidden_size))
+            layers.append(nn.ReLU())
+        layers.append(nn.Linear(hidden_size, output_size))
+        self.model = nn.Sequential(*layers)
 
     def forward(self, x):
-        out = self.hidden_layers(x)
-        out = self.output_layer(out)
-        return out
+        return self.model(x)
 
 
 # Training the Model
@@ -69,67 +72,79 @@ def train_model():
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Specify training and testing datasets
-    train_files = [f"ThermalAITest{i}.csv" for i in range(1, 10)]
-    test_files = [f"ThermalAITest{i}.csv" for i in range(10, 15)]
+    train_files = [f"ThermalAITest{i}.csv" for i in range(1, 6)]  # Use only 5 training samples
+    test_files = [f"ThermalAITest{i}.csv" for i in range(6, 15)]  # Use the rest for testing
 
     train_paths = [os.path.join(script_dir, "clean_data", file) for file in train_files]
     test_paths = [os.path.join(script_dir, "clean_data", file) for file in test_files]
 
-    # Load training datasets
+    # Load datasets
     train_datasets = [ThermalDataset(path) for path in train_paths]
     combined_train_dataset = ConcatDataset(train_datasets)
 
-    # Load testing datasets
     test_datasets = [ThermalDataset(path) for path in test_paths]
 
-    # Prepare DataLoader for training
-    train_dataloader = DataLoader(combined_train_dataset, batch_size=4, shuffle=True)
+    # Split training data into training and validation subsets
+    train_size = int(0.8 * len(combined_train_dataset))
+    val_size = len(combined_train_dataset) - train_size
+    train_subset, val_subset = random_split(combined_train_dataset, [train_size, val_size])
+
+    # Prepare DataLoaders
+    train_dataloader = DataLoader(train_subset, batch_size=16, shuffle=True)
+    val_dataloader = DataLoader(val_subset, batch_size=16, shuffle=False)
 
     # Determine input and output sizes dynamically
-    for dataset in train_dataloader.dataset.datasets:
-        if len(dataset) > 0:
-            input_size = dataset[0][0].shape[0]
-            output_size = dataset[0][1].shape[0]
-            break
-    else:
-        raise ValueError("All datasets are empty. Check the dataset loading process.")
+    input_size = train_subset[0][0].shape[0]
+    output_size = train_subset[0][1].shape[0]
 
-    # Device and Model Initialization
+    # Initialize model, loss, and optimizer
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = BasicNNModel(input_size=input_size, hidden_size=64, num_layers=2, output_size=output_size).to(device)
+    model = BasicNNModel(input_size=input_size, hidden_size=128, num_layers=4, output_size=output_size).to(device)
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=0.0005)
 
-    # Training Parameters
-    num_epochs = 8000
-    patience = 50
-    best_loss = float("inf")
+    # Training parameters
+    num_epochs = 2000
+    patience = 100
+    best_val_loss = float("inf")
     counter = 0
 
     # Training Loop
     for epoch in range(num_epochs):
         model.train()
-        epoch_loss = 0
+        train_loss = 0
 
-        for inputs, targets, _ in train_dataloader:  # Ignore time values
+        for inputs, targets, _ in train_dataloader:
             inputs, targets = inputs.to(device), targets.to(device)
 
             # Forward pass
             outputs = model(inputs)
             loss = criterion(outputs, targets)
 
-            # Backward pass and optimization
+            # Backward pass
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            epoch_loss += loss.item()
+            train_loss += loss.item()
 
-        epoch_loss /= len(train_dataloader)
+        train_loss /= len(train_dataloader)
+
+        # Validation Loop
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for inputs, targets, _ in val_dataloader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+                val_loss += loss.item()
+
+        val_loss /= len(val_dataloader)
 
         # Early Stopping Logic
-        if epoch_loss < best_loss:
-            best_loss = epoch_loss
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             counter = 0
         else:
             counter += 1
@@ -139,18 +154,18 @@ def train_model():
 
         # Log every 10 epochs
         if (epoch + 1) % 10 == 0:
-            print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {epoch_loss:.4f}")
+            print(f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
 
     return model, test_datasets
 
 
-# Testing Function
+# Testing the Model
 def test_model(model, test_datasets):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
 
     for i, test_dataset in enumerate(test_datasets):
-        dataset_name = f"ThermalAITest{i + 10}.csv"
+        dataset_name = f"ThermalAITest{i + 6}.csv"
         print(f"Testing on dataset: {dataset_name}")
 
         try:
@@ -163,16 +178,15 @@ def test_model(model, test_datasets):
                     predicted_output = model(test_input).cpu().numpy()
 
                 # Reshape predictions and actual values
-                num_time_steps = time_values.shape[0]
-                predicted_output = predicted_output.reshape(num_time_steps, -1)
-                actual_values = test_actual.numpy().reshape(num_time_steps, -1)
+                predicted_output = predicted_output.reshape(-1, 3)
+                actual_values = test_actual.numpy().reshape(-1, 3)
 
                 # Reverse scaling
                 scaler = test_dataset.scaler
                 predicted_original = scaler.inverse_transform(predicted_output)
                 actual_original = scaler.inverse_transform(actual_values)
 
-                # Plot each feature (T_min, T_max, T_ave)
+                # Plot results
                 plt.figure(figsize=(12, 6))
                 for feature_idx, feature_name in enumerate(["T_min", "T_max", "T_ave"]):
                     plt.plot(
@@ -199,7 +213,6 @@ def test_model(model, test_datasets):
             print(f"Error testing on {dataset_name}: {e}")
 
 
-# Main Execution
-if __name__ == "__main__":
-    trained_model, test_datasets = train_model()
-    test_model(trained_model, test_datasets)
+# Run Training and Testing
+trained_model, test_datasets = train_model()
+test_model(trained_model, test_datasets)
